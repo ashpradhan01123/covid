@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>d3 choropleth map</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div id="wrapper">	
+	<div id = "buttons"> 
+    <table>
+      <tr><td><button id="play-button">Play</button>
+        </td></tr>
+      <tr><td><input type="button" id="reset-button" value="Reset" onClick="document.location.reload(true)"></td></tr>
+ <tr><td><input type="button" id="confirmed-button" value="Confirmed" onClick="redirect('Confirmed')"></td></tr>
+ <tr><td><input type="button" id="deaths-button" value="Deaths" onClick="redirect('Death')"></td></tr>
+ 	</table>  </div>
+
+ 	</table>  </div>
+<div id="map"></div>
+</div>
+
+
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+<script src="https://d3js.org/queue.v1.min.js"></script>
+<script src="https://d3js.org/topojson.v1.min.js"></script>
+<script src="https://d3js.org/colorbrewer.v1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-legend/2.24.0/d3-legend.js"></script>
+<script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+<script>
+  //globals
+var width=900, height=580, projection, path, graticule, svg, attributeArray = [], currentAttribute = 0, playing = false;
+var moving = false;
+var currentValue = 0;
+var targetValue = width;
+var playButton;
+var mapChoice ;
+
+var startDate = new Date("2020-01-23"),
+    endDate = new Date("2020-07-23");
+var x= d3.scaleTime()
+    .domain([startDate, endDate])
+    .range([0, targetValue])
+    .clamp(true);
+//console.log(x);
+var formatDateIntoMonth = d3.timeFormat("%b");
+var formatDate = d3.timeFormat("%d %b");
+var formatDateforMap = d3.timeFormat("%m/%d/%y");
+var parseDate = d3.timeParse("%m/%d/%y");
+var handle, label;
+var slider ;
+var dateValue;
+
+
+function redirect(valueRedirect){
+
+if (valueRedirect == "Confirmed") {
+	location.href = "index_confirmed.html";
+	}
+else 
+	{
+	location.href = "index_death.html";
+	}
+}
+
+
+
+function init() {
+  setMap("Deaths");
+  animateMap();
+  setSlider();
+
+}
+
+function setMap(mapChoice) {
+
+  width = 960, height = 650;  // map width and height, matches 
+
+  projection = d3.geoEckert5()   // define our projection with parameters
+    .scale(170)
+    .translate([width / 2, height / 2])
+    .precision(.1);
+
+  path = d3.geoPath()  // create path generator function
+      .projection(projection);  // add our define projection to it
+
+  graticule = d3.geoGraticule(); // create a graticule
+
+  svg = d3.select("#map").append("svg")   // append a svg to our html div to hold our map
+      .attr("width", width)
+      .attr("height", height);
+
+  svg.append("defs").append("path")   // prepare some svg for outer container of svg elements
+      .datum({type: "Sphere"})
+      .attr("id", "sphere")
+      .attr("d", path);
+
+  svg.append("use")   // use that svg to style with css
+      .attr("class", "stroke")
+      .attr("xlink:href", "#sphere");
+
+  svg.append("path")    // use path generator to draw a graticule
+      .datum(graticule)
+      .attr("class", "graticule")
+      .attr("d", path);
+
+
+
+  svg.append("g")
+        .attr("class", "legendOrdinal")
+        .attr("transform", "translate(5,440)");
+
+  var categories = ["<100",">100",">500",">1000",">5000",">10000", ">20000"];
+
+
+  var ordinal = d3.scaleOrdinal()
+     .domain(categories)
+        .range(categories.map((val, i) => 
+          d3.interpolateReds(i / (categories.length - 1))
+        ));
+
+      var legendOrdinal = d3.legendColor()
+        .scale(ordinal);
+
+  svg.select(".legendOrdinal")
+        .call(legendOrdinal);
+
+
+	loadData(mapChoice);  // let's load our data next
+}
+
+function setSlider() {
+//////slider creation///////////////////
+	var margin = {top:50, right:50, bottom:0, left:50},
+    width = 960 - margin.left - margin.right,
+    height = 500 - margin.top - margin.bottom;
+
+
+  playButton = d3.select("#play-button");
+
+
+  slider =  svg.append("g")
+      .attr("class", "slider")
+      .attr("transform", "translate(20,600)");
+  //console.log (x.range()[0]);
+  //console.log (x.range()[1]);
+  slider.append("line")
+      .attr("class", "track")
+      .attr("x1", x.range()[0])
+      .attr("x2", x.range()[1])
+    .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-inset")
+    .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-overlay")
+      .call(d3.drag()
+          .on("start.interrupt", function() { slider.interrupt(); })
+          .on("start drag", function() {
+            currentValue = d3.event.x;
+            update(x.invert(currentValue)); 
+          })
+      );
+
+  slider.insert("g", ".track-overlay")
+  .attr("class", "ticks")
+  .attr("transform", "translate(0,18)")
+  .selectAll("text")
+  .data(x.ticks(10))
+  .enter()
+  .append("text")
+  .attr("x", x)
+  .attr("y", 10)
+  .attr("text-anchor", "middle")
+  .text(function(d) { return formatDateIntoMonth(d); });
+
+  handle = slider.insert("circle", ".track-overlay")
+  .attr("class", "handle")
+  .attr("r", 9);
+  label = slider.append("text")  
+  .attr("class", "label")
+  .attr("text-anchor", "middle")
+  .text(formatDate(startDate))
+  .attr("transform", "translate(0," + (-25) + ")")
+
+  playButton
+  .on("click", function() {
+  var button = d3.select(this);
+  if (button.text() == "Pause") {
+    moving = false;
+    clearInterval(timer);
+    // timer = 0;
+    button.text("Play");
+  } else {
+    moving = true;
+    timer = setInterval(step, 600);
+    button.text("Pause");
+  }
+  console.log("Slider moving playButton: " + moving);
+//  animateMap();
+  })
+
+}
+
+
+function step() {
+  update(x.invert(currentValue));
+  currentValue = currentValue + (targetValue/151);
+  if (currentValue > targetValue) {
+    moving = false;
+    currentValue = 0;
+    clearInterval(timer);
+    // timer = 0;
+    playButton.text("Play");
+    console.log("Slider moving: " + moving);
+  }
+}
+
+function update(h) {
+ // console.log("H Value:" +h);
+ // dateValue=console.log(formatDateforMap(h));
+  dateValue=formatDateforMap(h);
+ // console.log("Update Fired");
+  animateMap();
+  // update position and text of label according to slider scale
+  handle.attr("cx", x(h));
+  label
+    .attr("x", x(h))
+    .text(formatDate(h));
+}
+
+function loadData(mapChoice1) {
+
+if (mapChoice1 == "Confirmed"){
+
+  queue()   // queue function loads all external data files asynchronously 
+    .defer(d3.json, "world-topo.json")  // our geometries
+    .defer(d3.csv, "confirmed.csv")  // and associated data in csv file
+    .await(processData);   // once all files are loaded, call the processData function passing
+                           // the loaded objects as arguments
+console.log(mapChoice1);
+}
+else
+{
+ queue()   // queue function loads all external data files asynchronously 
+    .defer(d3.json, "world-topo.json")  // our geometries
+    .defer(d3.csv, "deaths_global.csv")  // and associated data in csv file
+    .await(processData);   // once all files are loaded, call the processData function passing
+                           // the loaded objects as arguments
+console.log(mapChoice1);
+}
+
+}
+
+function processData(error,world,countryData) {
+  // function accepts any errors from the queue function as first argument, then
+  // each data object in the order of chained defer() methods above
+
+  var countries = world.objects.countries.geometries;  // store the path in variable for ease
+  for (var i in countries) {    // for each geometry object
+    for (var j in countryData) {  // for each row in the CSV
+      if(countries[i].properties.admin == countryData[j].name) {   // if they match
+        for(var k in countryData[i]) {   // for each column in the a row within the CSV
+          if(k != 'name') {  // let's not add the name or id as props since we already have them
+            if(attributeArray.indexOf(k) == -1) { 
+               attributeArray.push(k);  // add new column headings to our array for later
+            }
+            countries[i].properties[k] = Number(countryData[j][k])  // add each CSV column key/value to geometry object
+          } 
+        }
+	console.log(attributeArray);
+        break;  // stop looking through the CSV since we made our match
+      }
+    }
+  }
+  d3.select('#clock').html(attributeArray[currentAttribute]);  // populate the clock initially with the first date
+  drawMap(world);  // let's mug the map now with our newly populated data object
+}
+
+function drawMap(world) {
+
+    svg.selectAll(".country")   // select country objects (which don't exist yet)
+      .data(topojson.feature(world, world.objects.countries).features)  // bind data to these non-existent objects
+      .enter().append("path") // prepare data to be appended to paths
+      .attr("class", "country") // give them a class for styling and access later
+      .attr("id", function(d) { return "code_" + d.properties.admin; }, true)  // give each a unique id for access later
+      .attr("d", path)
+      .append('title').text(function(d)  { return "Country: " + d.properties.admin; }) ; // create them using the svg path generator defined above
+
+    var dataRange = getDataRange(); // get the min/max values from the current year's range of data values
+    d3.selectAll('.country')  // select all the countries
+  .attr('fill', function(d) {return getColor(d.properties[attributeArray[currentAttribute]], dataRange)
+     });
+ 
+
+}
+
+function sequenceMap() {
+  
+    var dataRange = getDataRange(); // get the min/max values from the current year's range of data values
+    d3.selectAll('.country').transition()  //select all the countries and prepare for a transition to new values
+      .duration(750)  // give it a smooth time period for the transition
+      .attr('fill', function(d) {return getColor(d.properties[attributeArray[currentAttribute]], dataRange)
+     })
+ 
+
+	.select('title').text(function(d)  { return "Country: " + d.properties.admin + "\n"+ "Deaths: " + d.properties[attributeArray[currentAttribute]]; }) ;
+	
+
+}
+/*
+function getColor(valueIn, valuesIn) {
+
+  var color = d3.scale.linear() // create a linear scale
+    .domain([valuesIn[0],valuesIn[1]])  // input uses min and max values
+    .range([.05,1]);   // output for opacity between .3 and 1 %
+
+  return color(valueIn);  // return that number to the caller
+}
+*/
+function getColor(valueIn, valuesIn) {
+
+    var categories = [100, 500, 1000,5000,10000, 20000, 30000];
+
+var color = d3.scaleThreshold().domain(categories)
+  	  .range(categories.map((val, i) => 
+				d3.interpolateReds(i / (categories.length-1))));
+
+	
+
+/*
+  var color = d3.scaleThreshold()
+  .domain(categories)
+  .range(["#ffffd4", "#fee391", "#fec44f", "#fe9929","#ec7014", "#cc4c02", "#8c2d04"])
+*/
+  return color(valueIn);  // return that number to the caller
+}
+
+function getDataRange() {
+  // function loops through all the data values from the current data attribute
+  // and returns the min and max values
+
+  var min = Infinity, max = -Infinity;  
+  d3.selectAll('.country')
+    .each(function(d,i) {
+      var currentValue = d.properties[attributeArray[currentAttribute]];
+      if(currentValue <= min && currentValue != -99 && currentValue != 'undefined') {
+        min = currentValue;
+      }
+      if(currentValue >= max && currentValue != -99 && currentValue != 'undefined') {
+        max = currentValue;
+      }
+  });
+  return [min,max];  //boomsauce
+}
+
+function animateMap() {
+
+var timer;  // create timer object
+ if(currentAttribute < attributeArray.length-1 )
+{
+console.log("AnimateMap:" + attributeArray[currentAttribute]);
+  attributeArray[currentAttribute] = dateValue;
+  
+  sequenceMap();
+;
+}
+
+
+}
+
+
+window.onload = init();  // magic starts here
+  
+</script>
+</body>
+</html>
